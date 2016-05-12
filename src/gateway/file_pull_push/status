@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Absolute path to this script
+SCRIPT=$(readlink -f $0)
+# Absolute path this script is in
+SCRIPTPATH=$(dirname $SCRIPT)
+
+CEM_SCRIPT="$SCRIPTPATH/cem.py"
+CEM_CMD="python $CEM_SCRIPT"
+CEM_OUTPUT="$SCRIPTPATH/cem.out"
+
+# Status
+CEM_PID=$(pgrep -f "$CEM_CMD")
+cem_status=$?
+
+if [ "$cem_status" -gt "0" ]; then
+    echo "file_pull_push is not running"
+else
+    echo "file_pull_push running as PID: $CEM_PID"
+fi
+exit $cem_status

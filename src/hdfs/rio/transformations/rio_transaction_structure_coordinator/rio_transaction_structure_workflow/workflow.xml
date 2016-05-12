@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow-app name="${env}-wrkfl-riotransaction-raw-to-structure-${release}" xmlns="uri:oozie:workflow:0.3">
+    
+    <start to="move-files-to-processing"/>
+
+    <action name="move-files-to-processing">
+        <shell xmlns="uri:oozie:shell-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <exec>${util_location}/bulk_move_to_processing.sh</exec>
+            <argument>${raw_data_dir}/in</argument>
+            <argument>${file_pattern}</argument>
+            <argument>${processing_dir}/${wf:id()}</argument>
+            <argument>${done_dir}</argument>
+            <argument>${processing_dir}/${wf:id()}/${reject_list_dir_name}</argument> <!--parent dir for keeping reject file names-->
+            <env-var>HADOOP_USER_NAME=${wf:user()}</env-var>
+            <file>${util_location}/bulk_move_to_processing.sh#${util_location}/bulk_move_to_processing.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="decision-file-moved"/>
+        <error to="fail"/>
+    </action>
+
+    <decision name="decision-file-moved">
+        <switch>
+            <case to="fail-move-files-to-processing">
+                ${wf:actionData('move-files-to-processing')['status'] eq "ERROR"}
+            </case>
+            <case to="determine-dest-dir">
+                ${wf:actionData('move-files-to-processing')['file_count'] gt 0}
+            </case>
+            <default to="end" />
+        </switch>
+    </decision>
+    
+    <action name="determine-dest-dir">
+        <shell xmlns="uri:oozie:shell-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <exec>rio_determine_dest_dir.sh</exec>
+            <argument>${coord_nominalTime}</argument>
+            <argument>${raw_data_dir}</argument>
+            <env-var>HADOOP_USER_NAME=${wf:user()}</env-var>
+            <file>rio_determine_dest_dir.sh#rio_determine_dest_dir.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="segregate-data"/>
+        <error to="fail"/>
+    </action>
+    
+    <action name="segregate-data">
+        <pig>
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <script>rio_data_segregate.pig</script>
+            <param>InputDir=${processing_dir}/${wf:id()}</param>
+            <param>FilePattern=${file_pattern_hdfs}</param>
+            <param>InputCharSet=${input_charset}</param>
+            <param>TargetDelimiter=${target_delimiter}</param>
+            <param>TargetDir=${processing_dir}/${wf:id()}</param>
+            <param>Charset_UDF_URI=${CDL_udf_java_URI}</param>
+            <param>RejectListDir=${processing_dir}/${wf:id()}/${reject_list_dir_name}/pig</param>
+        </pig>
+        <ok to="forking-GSM-GPRS"/>
+        <error to="fail-segregate-data"/>
+    </action>
+    
+    <fork name="forking-GSM-GPRS">
+        <path start="convert-to-delimited-GSM" />
+        <path start="convert-to-delimited-GPRS" />
+    </fork>
+  
+  
+    <action name="convert-to-delimited-GSM">
+        <pig>
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <script>${util_location}/convert_FW2delimited.pig</script>
+            <param>InputDir=${processing_dir}/${wf:id()}/gsm</param>
+            <param>TargetDir=${wf:actionData('determine-dest-dir')['dest_dir_gsm']}</param>
+            <param>Delimiter=${target_delimiter}</param>
+            <param>FWPattern=${FWPattern_GSM}</param>
+            <param>PiggyBankFileURI=${piggybank_URI}</param>
+        </pig>
+        <ok to="joining"/>
+        <error to="fail-convert-to-delimited-GSM"/>
+    </action>
+    
+    <action name="convert-to-delimited-GPRS">
+        <pig>
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <script>${util_location}/convert_FW2delimited.pig</script>
+            <param>InputDir=${processing_dir}/${wf:id()}/gprs</param>
+            <param>TargetDir=${wf:actionData('determine-dest-dir')['dest_dir_gprs']}</param>
+            <param>Delimiter=${target_delimiter}</param>
+            <param>FWPattern=${FWPattern_GPRS}</param>
+            <param>PiggyBankFileURI=${piggybank_URI}</param>
+        </pig>
+        <ok to="joining"/>
+        <error to="fail-convert-to-delimited-GPRS"/>
+    </action>   
+    
+    <join name="joining" to="move-files-to-quarantine"/>
+    
+    <action name="move-files-to-quarantine">
+        <shell xmlns="uri:oozie:shell-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <exec>${util_location}/move_to_quarantine.sh</exec>
+            <argument>${processing_dir}/${wf:id()}/${reject_list_dir_name}</argument> <!--parent dir for  reject file names-->
+            <argument>${quarantine_dir}/${wf:id()}</argument> <!--QUARANTINE_DIR-->
+            <env-var>HADOOP_USER_NAME=${wf:user()}</env-var>
+            <file>${util_location}/move_to_quarantine.sh#${util_location}/move_to_quarantine.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="decision-file-to-quarantine"/>
+        <error to="fail"/>
+    </action>
+    
+	<decision name="decision-file-to-quarantine">
+        <switch>
+            <case to="fail-move-files-to-quarantine">
+                ${wf:actionData('move-files-to-quarantine')['status'] eq "ERROR"}
+            </case>
+            <default to="move-files-to-done" />
+        </switch>
+    </decision>
+	
+    <action name="move-files-to-done">
+        <fs>
+            <move source='${processing_dir}/${wf:id()}/${file_pattern_hdfs}' target='${done_dir}' />
+        </fs>
+           <ok to="decision-clean-up-temp"/>
+        <error to="fail"/>
+    </action>
+    
+    <decision name="decision-clean-up-temp">
+        <switch>
+            <case to="clean-up-temp">
+                ${cleanup_tmp eq "YES"}
+            </case>
+            <default to="decision-files-quarantined" />
+        </switch>
+    </decision>
+    
+    <action name="clean-up-temp">
+        <fs>
+            <delete path="${processing_dir}/${wf:id()}"/>
+        </fs>
+        <ok to="decision-files-quarantined"/>
+        <error to="fail-clean-up-temp"/>
+    </action>
+
+    <decision name="decision-files-quarantined">
+        <switch>
+            <case to="post-quarantine-action">
+                ${wf:actionData('move-files-to-quarantine')['quarantined_file_count'] gt 0}
+            </case>
+            <default to="end" />
+        </switch>
+    </decision>
+    
+    
+    <action name="post-quarantine-action">
+        <shell xmlns="uri:oozie:shell-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <exec>echo</exec>
+            <argument>msg="Error code: CDL1302;Error Processing some Files. Check Quarantine Dir for details: ${quarantine_dir}/${wf:id()}"</argument>
+            <env-var>HADOOP_USER_NAME=${wf:user()}</env-var>
+            <file>${util_location}/bulk_move_to_processing.sh#${util_location}/bulk_move_to_processing.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="fail"/>
+        <error to="fail"/>
+    </action>
+    
+    <!--kill name="post-quarantine-action">
+        <message>Error code: CDL1102/CDL1103; Some or all source files are quarantined due to incorrect header/footer;
+            Quarantine Dir for workflow: ${quarantine_dir}/${wf:id()}
+        </message>
+    </kill-->
+    
+    <kill name="fail-segregate-data">
+        <message>Error code: CDL4002; Error name: Unexpected error in transformation step:segregate-data. Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}] </message>
+    </kill>
+
+    <kill name="fail-convert-to-delimited-GSM">
+        <message>Error code: CDL4002; Error name: Unexpected error in transformation step:convert-to-delimited-GSM. Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}] </message>
+    </kill>
+    
+    <kill name="fail-convert-to-delimited-GPRS">
+        <message>Error code: CDL4002; Error name: Unexpected error in transformation step:convert-to-delimited-GPRS. Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}] </message>
+    </kill>
+  
+    <kill name="fail-move-files-to-processing">
+            <message>Action exited with error: ${wf:actionData('move-files-to-processing')['msg']}
+                  
+        </message>
+    </kill>
+    
+    <kill name="fail-move-files-to-quarantine">
+        <message>Action exited with error: ${wf:actionData('move-files-to-quarantine')['msg']}
+        </message>
+    </kill>
+    
+    <kill name="fail">
+        <message>Error Code: CDL4001; Error name: Unexpected error in transformation step. Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}];
+        </message>
+    </kill>
+        
+    <kill name="fail-clean-up-temp">
+        <message>Error Code: CDL1003; Error name: Unexpected error while deleting temp dir. Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}];
+        </message>
+    </kill>
+    
+    <end name="end"/>
+
+</workflow-app>

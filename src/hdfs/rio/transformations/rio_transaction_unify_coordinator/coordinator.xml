@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coordinator-app name="${env}-coord-rio-transaction-unify-${release}" frequency="${coord:minutes(15)}" start="${startTime}" end="${endTime}"
+                 timezone="CET" xmlns="uri:oozie:coordinator:0.4">
+    <controls>
+		<concurrency>1</concurrency>
+        <throttle>20</throttle>
+    </controls>
+    <datasets>
+        <dataset name="rio-gsm-feed" frequency="${coord:minutes(15)}" initial-instance="${startTime}" timezone="CET">
+            <uri-template>
+                ${nameNode}/data/${env}/swe/raw/${datasource}/${stream_gsm}/${YEAR}/${MONTH}/${DAY}/${HOUR}/${MINUTE}
+            </uri-template>
+            <done-flag>_SUCCESS</done-flag>
+        </dataset>
+        <dataset name="rio-gprs-feed" frequency="${coord:minutes(15)}" initial-instance="${startTime}" timezone="CET">
+            <uri-template>
+                ${nameNode}/data/${env}/swe/raw/${datasource}/${stream_gprs}/${YEAR}/${MONTH}/${DAY}/${HOUR}/${MINUTE}
+            </uri-template>
+            <done-flag>_SUCCESS</done-flag>
+        </dataset>
+    </datasets>
+    <input-events>
+        <data-in name="event-gsm-input" dataset="rio-gsm-feed">
+            <instance>${coord:current(0)}</instance>
+        </data-in>
+		<data-in name="event-gprs-input" dataset="rio-gprs-feed">
+            <instance>${coord:current(0)}</instance>
+        </data-in>
+    </input-events>
+    <action>
+        <workflow>
+            <app-path>${WrkflPath}</app-path>
+            <configuration>
+                <property>
+                    <name>wfInputGsm</name>
+                    <value>${coord:dataIn('event-gsm-input')}</value>
+				</property>
+                <property>
+                    <name>wfInputGprs</name>
+                    <value>${coord:dataIn('event-gprs-input')}</value>
+                </property>
+                <property>
+                    <name>nominalYear</name>
+                    <value>${coord:formatTime(coord:dateOffset(coord:nominalTime(), 0, 'MINUTE'), 'yyyy')}</value>
+                </property>
+                <property>
+                    <name>nominalMonth</name>
+                    <value>${coord:formatTime(coord:dateOffset(coord:nominalTime(), 0, 'MINUTE'), 'MM')}</value>
+                </property>
+                <property>
+                    <name>nominalDay</name>
+                    <value>${coord:formatTime(coord:dateOffset(coord:nominalTime(), 0, 'MINUTE'), 'dd')}</value>
+                </property>
+                <property>
+                    <name>nominalHour</name>
+                    <value>${coord:formatTime(coord:dateOffset(coord:nominalTime(), 0, 'MINUTE'), 'HH')}</value>
+                </property>
+                <property>
+                    <name>nominalMinute</name>
+                    <value>${coord:formatTime(coord:dateOffset(coord:nominalTime(), 0, 'MINUTE'), 'mm')}</value>
+                </property>
+                <!--property>
+                    <name>workflow_name</name>
+                    <value>${env}-wrkfl-nobill-${stream}-unify-${release}</value>
+                </property-->
+                <!--property>
+                    <name>delim</name>
+                    <value>;</value>
+                </property-->
+            </configuration>
+        </workflow>
+    </action>
+</coordinator-app>
+

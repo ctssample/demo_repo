@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow-app name="${env}-wrkfl-rio-transaction-unify-${release}" xmlns="uri:oozie:workflow:0.5">
+    <credentials>
+        <credential name='hcat-creds' type='hcat'>
+            <property>
+                <name>hcat.metastore.uri</name>
+                <value>${hcatMetastoreUri}</value>
+            </property>
+            <property>
+                <name>hcat.metastore.principal</name>
+                <value>hive/_HOST@TCAD.TELIA.SE</value>
+            </property>
+        </credential>
+    </credentials>
+    <start to="create-raw-table-gsm"/>
+
+	<fork name='start-gsm-gprs-unify'>
+		<path start = "hive-transformation-node-gsm"/>
+		<path start = "hive-transformation-node-gprs"/>
+	</fork>
+	
+	<!-- Step 1: create raw table on GSM raw structure file -->
+    <action name="create-raw-table-gsm"  cred='hcat-creds'>
+        <hive xmlns="uri:oozie:hive-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <job-xml>${HiveOozieSiteXML}</job-xml>
+            <script>create_raw_${stream_gsm}.hql</script>
+            <param>env=${env}</param>
+            <param>raw_table_gsm=t_${datasource}_raw_${stream_gsm}_${nominalHour}_${nominalMinute}</param>
+            <param>hdfs_raw_dir_gsm=${raw_location}/${stream_gsm}/${nominalYear}/${nominalMonth}/${nominalDay}/${nominalHour}/${nominalMinute}</param>
+            <file>${HiveOozieSiteXML}#${HiveOozieSiteXML}</file>
+        </hive>
+        <ok to="create-raw-table-gprs"/>
+        <error to="fail-create-raw-table-gsm"/>
+    </action>
+
+<!-- Step 2: create raw table on GPRS raw structure processed file -->	
+	    <action name="create-raw-table-gprs"  cred='hcat-creds'>
+        <hive xmlns="uri:oozie:hive-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <job-xml>${HiveOozieSiteXML}</job-xml>
+            <script>create_raw_${stream_gprs}.hql</script>
+            <param>env=${env}</param>
+            <param>raw_table_gprs=t_${datasource}_raw_${stream_gprs}_${nominalHour}_${nominalMinute}</param>
+            <param>hdfs_raw_dir_gprs=${raw_location}/${stream_gprs}/${nominalYear}/${nominalMonth}/${nominalDay}/${nominalHour}/${nominalMinute}</param>
+            <file>${HiveOozieSiteXML}#${HiveOozieSiteXML}</file>
+        </hive>
+        <ok to="start-gsm-gprs-unify"/>
+        <error to="fail-create-raw-table-gprs"/>
+    </action>
+	
+
+<!-- Step 3: GSM Transformation: Selects the data from raw structure layer and based on the SCHDATE and SCHTIME loads the data into specific partition in base layer -->		
+    <action name="hive-transformation-node-gsm"   cred='hcat-creds'>
+        <hive xmlns="uri:oozie:hive-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <job-xml>${HiveOozieSiteXML}</job-xml>
+            <script>${stream_gsm}_transformation.hql</script>
+            <param>env=${env}</param>
+            <param>raw_table=t_${datasource}_raw_${stream_gsm}_${nominalHour}_${nominalMinute}</param>
+            <param>base_table=t_${stream_gsm}</param>
+            <file>${HiveOozieSiteXML}#${HiveOozieSiteXML}</file>
+        </hive>
+        <ok to="join-gsm-gprs"/>
+        <error to="fail-hive-transformation-gsm"/>
+    </action>
+	
+<!-- Step 4: GPRS Transformation: Selects the data from raw structure layer and based on the SCHDATE and SCHTIME loads the data into specific partition in base layer -->			
+	    <action name="hive-transformation-node-gprs"   cred='hcat-creds'>
+        <hive xmlns="uri:oozie:hive-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <job-xml>${HiveOozieSiteXML}</job-xml>
+            <script>${stream_gprs}_transformation.hql</script>
+            <param>env=${env}</param>
+            <param>raw_table=t_${datasource}_raw_${stream_gprs}_${nominalHour}_${nominalMinute}</param>
+            <param>base_table=t_${stream_gprs}</param>
+            <file>${HiveOozieSiteXML}#${HiveOozieSiteXML}</file>
+        </hive>
+        <ok to="join-gsm-gprs"/>
+        <error to="fail-hive-transformation-gprs"/>
+    </action>
+	
+<!-- Step 5: Once the transformation is completed, drop the temporary raw table for GSM feed-->				
+    <action name="drop-raw-table-gsm"  cred='hcat-creds'>
+        <hive xmlns="uri:oozie:hive-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <job-xml>${HiveOozieSiteXML}</job-xml>
+            <script>drop_raw_table.hql</script>
+            <param>env=${env}</param>
+			<param>tenant=${tenant}</param>
+            <param>raw_table=t_${datasource}_raw_${stream_gsm}_${nominalHour}_${nominalMinute}</param>
+            <file>${HiveOozieSiteXML}#${HiveOozieSiteXML}</file>
+        </hive>
+        <ok to="drop-raw-table-gprs"/>
+        <error to="fail-drop-raw-table-gsm"/>
+    </action>
+
+<!-- Step 6: Once the transformation is completed, drop the temporary raw table for GPRS feed-->					
+    <action name="drop-raw-table-gprs"  cred='hcat-creds'>
+        <hive xmlns="uri:oozie:hive-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <job-xml>${HiveOozieSiteXML}</job-xml>
+            <script>drop_raw_table.hql</script>
+            <param>env=${env}</param>
+			<param>tenant=${tenant}</param>
+            <param>raw_table=t_${datasource}_raw_${stream_gprs}_${nominalHour}_${nominalMinute}</param>
+            <file>${HiveOozieSiteXML}#${HiveOozieSiteXML}</file>
+        </hive>
+        <ok to="end"/>
+        <error to="fail-drop-raw-table-gprs"/>
+    </action>
+	
+	    <kill name="fail-create-raw-table-gsm">
+        <message>Error code: CDL4003; Error name: Failed creating Hive table;
+            Failed to create table Raw Structured with Hive script [create_raw_${stream_gsm}.hql] arguments [env=${env}
+            raw_table_gprs=t_${datasource}_raw_${stream_gsm}_${nominalHour}_${nominalMinute}
+            hdfs_raw_dir_gsm=${raw_location}/${stream_gsm}/${nominalYear}/${nominalMonth}/${nominalDay}/${nominalHour}/${nominalMinute}]
+            Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}]
+        </message>
+    </kill>
+	
+	    <kill name="fail-create-raw-table-gprs">
+        <message>Error code: CDL4003; Error name: Failed creating Hive table;
+            Failed to create table Raw Structured with Hive script [create_raw_${stream_gprs}.hql] arguments [env=${env}
+            raw_table_gprs=t_${datasource}_raw_${stream_gprs}_${nominalHour}_${nominalMinute}
+            hdfs_raw_dir_gprs=${raw_location}/${stream_gprs}/${nominalYear}/${nominalMonth}/${nominalDay}/${nominalHour}/${nominalMinute}]
+            Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}]
+        </message>
+    </kill>
+	
+	    <kill name="fail-hive-transformation-gsm">
+        <message>Error code: CDL3003; Error name: Failed inserting Hive data with auto partition;
+            Failed to insert data in base with Hive script [${datasource}_${stream_gsm}_transformation.hql] arguments [env=${env}
+            stream=${stream_gsm} raw_table=t_${datasource}_raw_${stream_gsm}_${nominalHour}_${nominalMinute} base_table=t_${datasource}_${stream_gsm}]
+            Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}]
+        </message>
+    </kill>
+	
+	    <kill name="fail-hive-transformation-gprs">
+        <message>Error code: CDL3003; Error name: Failed inserting Hive data with auto partition;
+            Failed to insert data in base with Hive script [${datasource}_${stream_gprs}_transformation.hql] arguments [env=${env}
+            stream=${stream_gprs} raw_table=t_${datasource}_raw_${stream_gprs}_${nominalHour}_${nominalMinute} base_table=t_${datasource}_${stream_gprs}]
+            Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}]
+        </message>
+    </kill>
+	
+    <kill name="fail-drop-raw-table-gsm">
+        <message>Error code: CDL4004; Error name: Failed deleting Hive table;
+            Failed to delete table Raw Structured with Hive script [drop_raw_table.hql] arguments [env=${env}, tenant=${tenant}
+            raw_table=t_${datasource}_raw_${stream_gsm}_${nominalHour}_${nominalMinute}]
+            Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}]
+        </message>
+    </kill>
+	
+	
+    <kill name="fail-drop-raw-table-gprs">
+        <message>Error code: CDL4004; Error name: Failed deleting Hive table;
+            Failed to delete table Raw Structured with Hive script [drop_raw_table.hql] arguments [env=${env}, tenant=${tenant}
+            raw_table=t_${datasource}_raw_${stream_gprs}_${nominalHour}_${nominalMinute}]
+            Action exited with error: [${wf:errorMessage(wf:lastErrorNode())}]
+        </message>
+    </kill>
+	 <join name="join-gsm-gprs" to="drop-raw-table-gsm"/>
+	    <end name="end"/>
+</workflow-app>
